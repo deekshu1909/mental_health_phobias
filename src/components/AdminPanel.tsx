@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Download, AlertTriangle, Users, Activity } from 'lucide-react';
+import { ArrowLeft, Download, AlertTriangle, Users, Activity, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { PHOBIA_TYPES } from '../types';
+import { convertToCSV, convertToJSON, downloadFile, generateFilename, EXPORT_FORMATS } from '../lib/exportData';
 
 interface AdminPanelProps {
   onBack: () => void;
@@ -24,6 +25,9 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedExport, setSelectedExport] = useState<string>('');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
+  const [exporting, setExporting] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
 
   useEffect(() => {
     fetchAdminData();
@@ -72,16 +76,19 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
       return;
     }
 
+    setExporting(true);
+    setExportSuccess(false);
+
     try {
       let data: any[] = [];
-      let filename = '';
+      let dataTypeName = '';
 
       if (selectedExport === 'mental_health') {
         const { data: mentalData } = await supabase
           .from('mental_health_responses')
           .select('*');
         data = mentalData || [];
-        filename = 'mental_health_data.csv';
+        dataTypeName = 'mental_health_responses';
       } else {
         const phobiaType = PHOBIA_TYPES.find(p => p.id === selectedExport);
         if (phobiaType) {
@@ -89,34 +96,34 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
             .from(phobiaType.table)
             .select('*');
           data = phobiaData || [];
-          filename = `${phobiaType.id}_data.csv`;
+          dataTypeName = phobiaType.id;
         }
       }
 
       if (data.length === 0) {
         alert('No data available to export');
+        setExporting(false);
         return;
       }
 
-      const headers = Object.keys(data[0]);
-      const csvContent = [
-        headers.join(','),
-        ...data.map(row => headers.map(header => {
-          const value = row[header];
-          return typeof value === 'string' && value.includes(',') ? `"${value}"` : value;
-        }).join(','))
-      ].join('\n');
+      let content: string;
+      const format = EXPORT_FORMATS[exportFormat];
+      const filename = generateFilename(dataTypeName, format.extension);
 
-      const blob = new Blob([csvContent], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      if (exportFormat === 'csv') {
+        content = convertToCSV(data);
+      } else {
+        content = convertToJSON(data);
+      }
+
+      downloadFile(content, filename, format.mimeType);
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 3000);
     } catch (error) {
       console.error('Error exporting data:', error);
       alert('Failed to export data');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -185,7 +192,8 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                 <select
                   value={selectedExport}
                   onChange={(e) => setSelectedExport(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={exporting}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                 >
                   <option value="">Choose data type...</option>
                   <option value="mental_health">Mental Health Responses</option>
@@ -196,13 +204,46 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-gray-700 font-semibold mb-2">Export Format</label>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setExportFormat('csv')}
+                    disabled={exporting}
+                    className={`flex-1 py-2 px-4 rounded-lg font-semibold transition-colors ${
+                      exportFormat === 'csv'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    } disabled:opacity-50`}
+                  >
+                    CSV
+                  </button>
+                  <button
+                    onClick={() => setExportFormat('json')}
+                    disabled={exporting}
+                    className={`flex-1 py-2 px-4 rounded-lg font-semibold transition-colors ${
+                      exportFormat === 'json'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    } disabled:opacity-50`}
+                  >
+                    JSON
+                  </button>
+                </div>
+              </div>
+              {exportSuccess && (
+                <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <span className="text-green-800 font-semibold">Export successful!</span>
+                </div>
+              )}
               <button
                 onClick={handleExportData}
-                disabled={!selectedExport}
+                disabled={!selectedExport || exporting}
                 className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >
                 <Download className="w-5 h-5" />
-                Export as CSV
+                {exporting ? 'Exporting...' : `Export as ${exportFormat.toUpperCase()}`}
               </button>
             </div>
           </div>
